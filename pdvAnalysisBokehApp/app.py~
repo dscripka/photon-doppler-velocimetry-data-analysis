@@ -1,0 +1,34 @@
+# Flask HTTP server, with Bokeh server app integrated
+import subprocess
+import atexit
+from flask import render_template, Flask, request, Response
+from bokeh.embed import autoload_server
+from bokeh.client import pull_session
+
+app = Flask(__name__)
+
+bokehApp = "testBokehApp"
+
+bokeh_process = subprocess.Popen(
+    ['bokeh', 'serve', '--host', 'localhost:5000' , '--host', 'localhost:5006', bokehApp + '.py'], stdout=subprocess.PIPE)
+
+@atexit.register
+def kill_server():
+    bokeh_process.kill()
+
+@app.route('/')
+def index():
+    session=pull_session(app_path='/' + bokehApp)
+    bokeh_script=autoload_server(model=None, app_path="/" + bokehApp, session_id=session.id)
+    return render_template('index.html', bokeh_script=bokeh_script)
+
+@app.route('/uploadFile', methods=["POST"])
+def uploadData():
+    print(request.json)
+    resp = Response("Foo bar baz")
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
+
+if __name__ == '__main__':
+    print("STARTED")
+    app.run(debug=True)

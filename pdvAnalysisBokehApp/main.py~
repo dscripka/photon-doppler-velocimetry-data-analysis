@@ -1,0 +1,519 @@
+# Bokeh Web app for analysis of PDV data.
+# Launch by running "bokeh serve <APP NAME>.py", and navigating to http://localhost:5006/ with your web browser
+
+###################
+# Import modules
+###################
+
+from os.path import dirname, join
+import tempfile
+import numpy as np
+import scipy as sp
+import scipy.ndimage.filters
+from scipy.interpolate import UnivariateSpline
+from random import random
+from wavelets import WaveletAnalysis, Morlet
+
+
+from bokeh.layouts import column, row, widgetbox, gridplot
+from bokeh.models import Button, Div, ColumnDataSource, TextInput, Span, Range1d
+from bokeh.models.widgets import Panel, Tabs, Slider
+from bokeh.models.callbacks import CustomJS
+from bokeh import events
+from bokeh.plotting import figure, curdoc
+from bokeh.palettes import viridis
+
+import ipdb
+
+import matplotlib.path
+
+##############################################
+# Data load and inspection tab for raw data
+##############################################
+
+# create a plot and style its properties
+p_rawData = figure(title="Raw Data", x_axis_label='x', y_axis_label='y', webgl=False, 
+           lod_threshold=None, plot_width=1200, active_scroll="wheel_zoom")
+
+# Add plots and data sources
+
+ds = ColumnDataSource(dict(x=[], y=[]))
+ds_analysis = ColumnDataSource(dict(x=[], y=[]))
+p_rawData_line = p_rawData.line(x='x', y='y', source=ds, line_width=1)
+
+# Define global raw data
+X = np.array([])
+Y = np.array([])
+sample_freq = 0
+breakoutPt = 0
+
+# Define max points to to show on any given plot
+maxPts = 5000
+
+def plot_data():
+    # Get file read parameters
+    startingRow = int(startRow.value)
+    startingCol = int(startCol.value)
+
+    # Read in data
+    dat = np.genfromtxt(join(tempfile.gettempdir(), "dataFile"), delimiter=',', skip_header=startingRow)
+
+    global X
+    #X = np.arange(0,1000e-9,40e-12)
+    X = dat[:,startingCol-1]
+
+    global Y
+    #Y = np.sin(X/1e-9)
+    Y = dat[:,startingCol]
+
+    global sample_freq
+    sample_freq = X[1] - X[0]
+
+    # Update plot data source
+    spc = int(((X[-1] - X[0])/maxPts)/sample_freq)
+    #print(spc)
+    x = X[np.arange(0, X.size, spc)]
+    y = Y[np.arange(0, X.size, spc)]
+    ds.data = dict(x=x,y=y)
+
+    # Change button color to green
+    button2.button_type = "success"
+
+def downsample(attr, old, new):
+    
+    # Access global raw data variables
+    global X
+    global Y
+    global sample_freq
+
+    # Get current range min and max
+    lwr, upr = p_rawData.x_range.start, p_rawData.x_range.end
+
+    # Calculate spacing for max points
+    if (upr-lwr)/sample_freq > maxPts:
+        spc = int(((upr-lwr)/maxPts)/sample_freq)
+        
+        x = X[np.arange(0, X.size, spc)]
+        y = Y[np.arange(0, X.size, spc)]
+        ds.data = dict(x=x,y=y)
+
+    if (upr-lwr)/sample_freq < maxPts and len(ds.data['x']) < maxPts:
+        print(len(ds.data['x']))
+        x = X
+        y = Y
+        ds.data = dict(x=x,y=y)
+
+def UpdatePlots():
+	# Update all plots to represent current data selection, breakout points, etc.
+
+	if X.size > 0:
+		# Get current range min and max on raw data tab
+		lwr, upr = p_rawData.x_range.start, p_rawData.x_range.end
+
+		# Update data sources on secondary plots on other tabs to the current visible data on the main tab (raw data)
+		x = X[(np.abs(X - lwr)).argmin():(np.abs(X - upr)).argmin()]
+		y = Y[(np.abs(X - lwr)).argmin():(np.abs(X - upr)).argmin()]
+		ds_analysis.data = dict(x=x, y=y)
+
+	if breakoutPt != 0 and wvt_ds_velocity.data['velocity'] != []:
+		# Update all velocity plots to incorporate defined breakout point
+		#ipdb.set_trace()
+		wv_v = np.array(wvt_ds_velocity.data['velocity'])
+		wv_v[0:breakoutPt] = 0
+		wvt_ds_velocity.data['velocity'] = wv_v
+
+	if breakoutPt != 0 and fft_ds_velocity.data['velocity'] != []:
+		fft_v = np.array(fft_ds_velocity.data['velocity'])
+		fft_v[0:breakoutPt] = 0
+		fft_ds_velocity.data['velocity'] = fft_v
+
+# Define callbacks for zooming and panning on primary plot
+
+p_rawData.x_range.on_change('end', downsample)
+
+# Create customJS to get HTML5 file input information
+js_callback = CustomJS(code=open(join(dirname(__file__), "readFile.js")).read())
+
+# add a button widget and configure with the call back
+button = Button(label="Load File", id="uploadButton", width=300, button_type="warning")
+button2 = Button(label="Plot Data", width=300, button_type="warning")
+button2.on_click(plot_data)
+
+button.js_on_event(events.ButtonClick, js_callback)
+
+# Create html input in Div widget
+
+fileInput = Div(text="""
+<h1>Select File</h1>
+<input type="file" id="upload">
+""", width=350)
+
+filePreview = Div(text = '<h1> File Preview </h1> <div id="fileContents">x,y</div>', id="filePreview", width=600)
+fileReadError = Div(text='', width=600)
+startCol = TextInput(value="1", title="Starting Column:")
+startRow = TextInput(value="1", title="Starting Row:")
+
+############################################
+# Zero Crossing Analysis
+############################################
+
+p_zeroCrossing = figure(title="Zero Crossing Analysis", x_axis_label='x', y_axis_label='y',
+                        webgl=False, lod_threshold=None, plot_width=1200, active_scroll="wheel_zoom")
+
+ds_splinefit = ColumnDataSource(dict(x=[], y=[], y_spline=[]))
+p_zeroCrossing_line = p_zeroCrossing.line(x='x', y='y', source=ds_splinefit, line_alpha=0.5)
+
+
+def FitSpline(attr, old, new):
+    x = ds_analysis.data['x']
+    y = ds_analysis.data['y']
+    spl = UnivariateSpline(ds_analysis.data['x'], ds_analysis.data['y'], k=3, s=splineSlider.value)
+
+    ds_splinefit.data = dict(x=x,y=y,y_spline=spl(x))
+
+def InitFitSpline():
+    dataSamp = ds_analysis.data['y']
+    gSmooth = sp.ndimage.filters.gaussian_filter1d(dataSamp, 15)
+    init_s = np.sum((dataSamp - sp.ndimage.filters.gaussian_filter1d(dataSamp, 15))**2)
+    splineSlider.value = init_s
+    splineSlider.start = init_s/75
+    splineSlider.end = init_s*2
+    splineSlider.step = (splineSlider.end - splineSlider.start)/300
+    #print(init_s)
+    p_zeroCrossing_spline = p_zeroCrossing.line(x='x', y='y_spline', source=ds_splinefit,
+                                                line_color="red", line_width=1)
+
+fitSpline = Button(label="Fit Spline Curve", button_type="success")
+fitSpline.on_click(InitFitSpline)
+
+splineSlider = Slider(title = "Spline width parameter",
+		      value = 0,
+                      start = 0,
+                      end = 0,
+                      step = 0)
+
+splineSlider.on_change('value', FitSpline)
+
+# Define vertical line marking position of velocity breakout
+
+def SetBreakout(attr, old, new):
+	# Find index of breakout time
+	ndx = (np.abs(ds_analysis.data['x']-breakoutSlider.value*1e-9)).argmin()
+
+	global breakoutPt
+	breakoutPt = ndx
+
+	# Update position of vertical line marking velocity breakout
+	p_zeroCrossing_breakoutLine.location = breakoutSlider.value*1e-9
+	y_spline = ds_splinefit.data['y_spline']
+	y_spline[0:ndx] = 0
+	ds_splinefit.data['y_spline'] = y_spline
+
+breakoutSlider = Slider(title = "Velocity breakout position (ns)",
+			value = 0,
+			start = 0,
+			end = 0,
+			step= sample_freq)
+
+breakoutSlider.on_change('value', SetBreakout)
+
+p_zeroCrossing_breakoutLine = Span(location=0, dimension='height', line_color='green', line_width=1)
+p_zeroCrossing.add_layout(p_zeroCrossing_breakoutLine)
+
+def DetectBreakout():
+	# Find velocity breakout
+	x = ds.data['x']
+	y = ds.data['y']
+	ySpline = ds_analysis.data['y']
+	dt = np.abs(np.abs(ds_analysis.data['x'][1]) - np.abs(ds_analysis.data['x'][0]))
+	yMean = np.mean(y[0:50])
+	ySd = np.std(y[0:50])
+	for ndx,val in enumerate(y):
+		if abs(val - 3*ySd) < np.ptp(y)*0.01:
+			breakoutPoint = x[ndx]
+
+			# Set breakout line on plot and update slider values
+			p_zeroCrossing_breakoutLine.location = breakoutPoint
+			breakoutSlider.value = breakoutPoint/1e-9
+			breakoutSlider.start = p_zeroCrossing.x_range.start/1e-9
+			breakoutSlider.end = p_zeroCrossing.x_range.end/1e-9
+			#breakoutSlider.step = ((breakoutSlider.end - breakoutSlider.start)/100)/1e-9
+			break
+
+detectBreakout = Button(label="Find Velocity Breakout", button_type="success")
+detectBreakout.on_click(DetectBreakout)
+
+###########################
+# Wavelet Analysis
+###########################
+
+# Callback Function to perform continous wavelet transform
+def cwt(attr, old, new):
+	# Perform wavelet transform
+	yWvt = ds_analysis.data['y']
+	wa = WaveletAnalysis(yWvt, wavelet=Morlet(w0=np.float(wvtWidth.value)), dt=sample_freq, dj=np.float(wvtFreqstep.value))
+	wvt = wa.time
+	wvfreq = wa.fourier_frequencies
+	wvpower = np.flipud(wa.wavelet_power)
+	wvt_ds.data = {'image': [wvpower], 'dw': [wvpower.shape[1]], 'dh': [wvpower.shape[0]], 'wv_time': [wvt], 'wv_freq': [wvfreq]}
+	p_wavelet.x_range.end = wvpower.shape[1]  # need to set ranges before creating image, and not using Range1d?
+	p_wavelet.y_range.end = wvpower.shape[0]  # need to set ranges before creating image, and not using Range1d?
+
+	#ipdb.set_trace()
+	#print(wvt_ds.data)
+
+# Callback function for initial plotting of wavelet transform spectrogram
+def Plot_cwt():
+	# Perform initial wavelet transform
+	yWvt = ds_analysis.data['y']
+	wa = WaveletAnalysis(yWvt, wavelet=Morlet(w0=np.float(wvtWidth.value)), dt=sample_freq, dj=np.float(wvtFreqstep.value))
+	wvt = wa.time
+	wvfreq = wa.fourier_frequencies
+	wvpower = np.flipud(wa.wavelet_power)
+	wvt_ds.data = {'image': [wvpower], 'dw': [wvpower.shape[1]], 'dh': [wvpower.shape[0]], 'wv_time': [wvt], 'wv_freq': [wvfreq]}
+
+	# Plot wavelet transform as image
+
+	wvt_ds.data['image'] = [wvpower]
+	p_wavelet.x_range.end = wvpower.shape[1]  # need to set ranges before creating image, and not using Range1d?
+	p_wavelet.y_range.end = wvpower.shape[0]  # need to set ranges before creating image, and not using Range1d?
+
+	p_wavelet.image(image='image', source=wvt_ds, x=0, y=0, dw='dw', dh='dh', palette=viridis(200))
+
+
+# Callback function to extract velocity from wavelet spectrogram
+
+def ExtractVelocityWVT():
+	# Get current power spectrum
+	wvpower = wvt_ds.data['image'][0]
+	freqs = np.flipud(np.array(wvt_ds.data['wv_freq'][0]))
+
+	# Extract velocity from vertical lineouts
+	wvvpks = [np.argmax(wvpower[:,i]) for i in range(0,wvpower.shape[1])]
+	wvvpks = np.zeros(wvpower.shape[1], dtype=np.int16)
+	wvvpks[-1] = np.argmax(wvpower[:,-1])
+
+	for i in np.arange(wvpower.shape[1]-2,0,-1):
+		coli = np.copy(wvpower[:,i])
+		pk = np.argmax(coli)
+		if pk - wvvpks[i+1] > 500:
+			while abs(pk - wvvpks[i+1]) > 500:
+			    coli[pk] = 0
+			    pk = np.argmax(coli)
+			wvvpks[i] = pk
+		else:
+			wvvpks[i] = np.argmax(coli)
+
+	# Update velocity plot
+	
+	wvt_ds_velocity.data['x'] = wvt_ds.data['wv_time'][0]
+	wvt_ds_velocity.data['velocity'] = [freqs[i]*1550.0e-9/2 for i in wvvpks]
+	#print(wvvpks)
+	#ipdb.set_trace()
+	
+
+# Add UI elements
+calculateCWT = Button(label="Calculate Wavelet Transform", button_type="success")
+calculateCWT.on_click(Plot_cwt)
+
+wvtWidth = TextInput(value="3.0", title="Wavelet Width")
+wvtFreqstep = TextInput(value="0.3", title="Wavelet Frequency Step")
+
+wvtWidth.on_change('value', cwt)
+wvtFreqstep.on_change('value', cwt)
+
+extractVelocityWVT = Button(label="Extract Velocity", button_type="success")
+extractVelocityWVT.on_click(ExtractVelocityWVT)
+
+
+# Create figure for spectrogram
+wvt_ds = ColumnDataSource(data = dict(image=[], dw=[10], dh=[10]))
+p_wavelet = figure(title="Wavelet Transform Spectrogram", tools="lasso_select, reset,pan,wheel_zoom,box_select,resize",
+	    active_scroll="wheel_zoom", x_range=(0,10), y_range=(0,10), width=900)  # need to set ranges initially for updates to work?
+
+# Create figure for velocity extraction
+
+wvt_ds_velocity = ColumnDataSource(data = dict(x=[], velocity = []))
+p_wavelet_velocity = figure(title="Extracted Velocity", x_axis_label='Time', y_axis_label='Velocity (m/s)', webgl=False, 
+           lod_threshold=None, plot_width=900, active_scroll="wheel_zoom")
+p_wavelet_velocity.line(x='x', y='velocity', source=wvt_ds_velocity, line_width=1)
+
+# Get selected region
+
+def SelectionUpdateWVT(attr, old, new):
+	# Get x and y points of selection region
+	lassoRegionX = p_wavelet.tool_events.geometries[0]['x']
+	lassoRegionY = p_wavelet.tool_events.geometries[0]['y']
+
+	# Get current spectrogram data
+	wvpower = wvt_ds.data['image'][0]
+
+	# Find points in wavelet power spectrogram inside selection region
+	X, Y = np.meshgrid(np.arange(wvpower.shape[1]), np.arange(wvpower.shape[0]))
+	powerPts = np.vstack((Y.flatten(),X.flatten())).T
+	polygon = [(int(row),int(col)) for row,col in zip(lassoRegionY, lassoRegionX)]  #flip X and Y for row/col orientation
+	path = matplotlib.path.Path(polygon)
+	selected = path.contains_points(powerPts)
+	selected = selected.reshape((wvpower.shape[0], wvpower.shape[1]))
+
+	# Update image data source
+	#wvt_ds.data = {'image': [np.multiply(selected, wvpower)], 'dw': [wvpower.shape[1]], 'dh': [wvpower.shape[0]]}
+	wvt_ds.data['image'] = [np.multiply(selected, wvpower)]
+
+p_wavelet.tool_events.on_change('geometries', SelectionUpdateWVT) 
+#wvt_ds.on_change('selected', SelectionUpdate)
+
+
+###########################
+# FFT Analysis
+###########################
+
+# Callback Function to calculate fft spectrogram
+def spectrogram(attr, old, new):
+	# Perform fft transform to get spectrogram
+	yFFT = ds_analysis.data['y']
+	
+	freq, t, power = sp.signal.spectrogram(yFFT, fs=sample_freq, window=sp.signal.hamming(np.float(fftWidth.value), sym=False),
+                                        noverlap=np.float(fftWidth.value) - np.float(fftTimestep.value),
+					nfft = np.float(fftFreqbins.value), nperseg=np.float(fftWidth.value), mode='psd')
+
+	fft_ds.data = {'image': [power], 'dw': [power.shape[1]], 'dh': [power.shape[0]], 'fft_time': [t], 'fft_freq': [freq]}
+	p_fft.x_range.end = power.shape[1]  # need to set ranges before creating image, and not using Range1d?
+	p_fft.y_range.end = power.shape[0]  # need to set ranges before creating image, and not using Range1d?
+
+# Callback function for initial plotting of fft transform spectrogram
+def Plot_FFT():
+	# Perform initial wavelet transform
+	yFFT = ds_analysis.data['y']
+	freq, t, power = sp.signal.spectrogram(yFFT, fs=sample_freq, window=sp.signal.hamming(np.float(fftWidth.value), sym=False),
+                                        noverlap=np.float(fftWidth.value) - np.float(fftTimestep.value),
+					nfft = np.float(fftFreqbins.value), nperseg=np.float(fftWidth.value), mode='psd')
+
+	fft_ds.data = {'image': [power], 'dw': [power.shape[1]], 'dh': [power.shape[0]], 'fft_time': [t], 'fft_freq': [freq]}
+
+	# Plot wavelet transform as image
+
+	fft_ds.data['image'] = [power]
+	p_fft.x_range.end = power.shape[1]  # need to set ranges before creating image, and not using Range1d?
+	p_fft.y_range.end = power.shape[0]  # need to set ranges before creating image, and not using Range1d?
+
+	p_fft.image(image='image', source=fft_ds, x=0, y=0, dw='dw', dh='dh', palette=viridis(200))
+
+
+# Callback function to extract velocity from wavelet spectrogram
+
+def ExtractVelocityFFT():
+	# Get current power spectrum
+	power = fft_ds.data['image'][0]
+	freqs = fft_ds.data['fft_freq'][0]
+
+	# Extract velocity from vertical lineouts
+	vpks = [np.argmax(power[:,i]) for i in range(0,power.shape[1])]
+	vpks = np.zeros(power.shape[1], dtype=np.int16)
+	vpks[-1] = np.argmax(power[:,-1])
+
+	for i in np.arange(power.shape[1]-2,0,-1):
+		coli = np.copy(power[:,i])
+		pk = np.argmax(coli)
+		if pk - vpks[i+1] > 500:
+			while abs(pk - vpks[i+1]) > 500:
+			    coli[pk] = 0
+			    pk = np.argmax(coli)
+			vpks[i] = pk
+		else:
+			vpks[i] = np.argmax(coli)
+
+	# Update velocity plot
+	
+	fft_ds_velocity.data['x'] = fft_ds.data['fft_time'][0]
+	fft_ds_velocity.data['velocity'] = [freqs[i]*1550.0e-9/2 for i in vpks]
+	#ipdb.set_trace()
+	
+
+# Add UI elements
+calculateFFT = Button(label="Calculate STFT", button_type="success")
+calculateFFT.on_click(Plot_FFT)
+
+fftWidth = TextInput(value="512", title="Window Width")
+fftFreqbins = TextInput(value="1024", title="Frequency Bins")
+fftTimestep = TextInput(value="1.0", title="Time Step (ns)")
+
+fftWidth.on_change('value', spectrogram)
+fftFreqbins.on_change('value', spectrogram)
+fftTimestep.on_change('value', spectrogram)
+
+extractVelocityFFT = Button(label="Extract Velocity", button_type="success")
+extractVelocityFFT.on_click(ExtractVelocityFFT)
+
+# Create figure for spectrogram
+fft_ds = ColumnDataSource(data = dict(image=[], dw=[10], dh=[10]))
+p_fft = figure(title="Short Time Fourier Transform Spectrogram", tools="lasso_select, reset,pan,wheel_zoom,box_select,resize",
+	    active_scroll="wheel_zoom", x_range=(0,10), y_range=(0,10), width=900)  # need to set ranges initially for updates to work?
+
+# Create figure for velocity extraction
+
+fft_ds_velocity = ColumnDataSource(data = dict(x=[], velocity = []))
+p_fft_velocity = figure(title="Extracted Velocity", x_axis_label='Time', y_axis_label='Velocity (m/s)', webgl=False, 
+           lod_threshold=None, plot_width=900, active_scroll="wheel_zoom")
+p_fft_velocity.line(x='x', y='velocity', source=fft_ds_velocity, line_width=1)
+
+# Get selected region
+
+def SelectionUpdateFFT(attr, old, new):
+	# Get x and y points of selection region
+	lassoRegionX = p_fft.tool_events.geometries[0]['x']
+	lassoRegionY = p_fft.tool_events.geometries[0]['y']
+
+	# Get current spectrogram data
+	power = fft_ds.data['image'][0]
+
+	# Find points in wavelet power spectrogram inside selection region
+	X, Y = np.meshgrid(np.arange(power.shape[1]), np.arange(power.shape[0]))
+	powerPts = np.vstack((Y.flatten(),X.flatten())).T
+	polygon = [(int(row),int(col)) for row,col in zip(lassoRegionY, lassoRegionX)]  #flip X and Y for row/col orientation
+	path = matplotlib.path.Path(polygon)
+	selected = path.contains_points(powerPts)
+	selected = selected.reshape((power.shape[0], power.shape[1]))
+
+	# Update image data source
+	fft_ds.data['image'] = [np.multiply(selected, power)]
+
+p_fft.tool_events.on_change('geometries', SelectionUpdateFFT) 
+#wvt_ds.on_change('selected', SelectionUpdate)
+
+#########################
+# Define Layouts
+#########################
+
+# Raw data tab
+rawData_layout = column(p_rawData, row(widgetbox(fileInput, button, startCol, startRow, button2), column(filePreview, fileReadError)))
+tab_rawData = Panel(child=rawData_layout, title="Raw Data")
+
+# Zero crossing analysis tab
+zeroCrossing_layout = column(p_zeroCrossing, row(fitSpline, splineSlider), row(detectBreakout, breakoutSlider))
+tab_zeroCrossing = Panel(child=zeroCrossing_layout, title="Zero Crossing")
+
+# Wavelet analysis tab
+wavelet_layout = row(column(p_wavelet, calculateCWT, wvtWidth, wvtFreqstep), column(p_wavelet_velocity, extractVelocityWVT))
+tab_wavelet = Panel(child=wavelet_layout, title="Continuous Wavelet Transform")
+
+# FFT analysis tab
+fft_layout = row(column(p_fft, calculateFFT, fftWidth, fftFreqbins, fftTimestep), column(p_fft_velocity, extractVelocityFFT))
+tab_fft = Panel(child=fft_layout, title="Short Time Fourier Transform")
+
+
+# Final arrangement of tabs
+tabs = Tabs(tabs=[tab_rawData, tab_zeroCrossing, tab_wavelet, tab_fft])
+#tabs = Tabs(tabs=[tab_rawData, tab_zeroCrossing, tab_wavelet])
+curdoc().add_root(tabs)
+curdoc().add_periodic_callback(UpdatePlots, 1000)
+
+#######################################
+# Start bottle server for file upload
+#######################################
+
+import subprocess
+import os
+
+wd = os.getcwd()
+proc = subprocess.Popen(['python', wd + '/pdvAnalysisBokehApp/bottleServer.py'])

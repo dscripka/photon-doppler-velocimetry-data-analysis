@@ -1,0 +1,189 @@
+# Bokeh Web app for analysis of PDV data.
+# Launch by running "bokeh serve <APP NAME>.py", and navigating to http://localhost:5006/ with your web browser
+
+###################
+# Import modules
+###################
+
+from os.path import dirname, join
+import tempfile
+import numpy as np
+import scipy as sp
+import scipy.ndimage.filters
+from scipy.interpolate import UnivariateSpline
+from random import random
+
+from bokeh.layouts import column, row, widgetbox, gridplot
+from bokeh.models import Button, Div, ColumnDataSource, TextInput
+from bokeh.models.widgets import Panel, Tabs, Slider
+from bokeh.models.callbacks import CustomJS
+from bokeh import events
+from bokeh.plotting import figure, curdoc
+
+# Create Plots and Tab Layout
+
+# create a plot and style its properties
+p_rawData = figure(title="Raw Data", x_axis_label='x', y_axis_label='y', webgl=False, 
+           lod_threshold=None, plot_width=1200)
+
+p_zeroCrossing = figure(title="Zero Crossing Analysis", x_axis_label='x', y_axis_label='y',
+                        webgl=False, lod_threshold=None)
+
+# Add plots
+
+ds = ColumnDataSource(dict(x=[], y=[]))
+ds_analysis = ColumnDataSource(dict(x=[], y=[], y_spline=[]))
+
+p_rawData_line = p_rawData.line(x='x', y='y', source=ds, line_width=1)
+ds = p_rawData_line.data_source
+
+p_zeroCrossing_line = p_zeroCrossing.line(x='x', y='y', source=ds_analysis, line_alpha=0.5)
+
+# Define global raw data
+X = np.array([])
+Y = np.array([])
+sample_freq = 0
+
+# Define max points to to show on any given plot
+maxPts = 5000
+
+# create a callback that will add a number in a random location
+def plot_data():
+    # Get file read parameters
+    startingRow = int(startRow.value)
+    startingCol = int(startCol.value)
+
+    # Read in data
+    dat = np.genfromtxt(join(tempfile.gettempdir(), "dataFile"), delimiter=',', skip_header=startingRow)
+
+    global X
+    #X = np.arange(0,1000e-9,40e-12)
+    X = dat[:,startingCol-1]
+
+    global Y
+    #Y = np.sin(X/1e-9)
+    Y = dat[:,startingCol]
+
+    global sample_freq
+    sample_freq = X[1] - X[0]
+
+    # Update plot data source
+    spc = int(((X[-1] - X[0])/maxPts)/sample_freq)
+    #print(spc)
+    x = X[np.arange(0, X.size, spc)]
+    y = Y[np.arange(0, X.size, spc)]
+    ds.data = dict(x=x,y=y)
+
+    # Change button color to green
+    button2.button_type = "success"
+
+def downsample(attr, old, new):
+    
+    # Access global raw data variables
+    global X
+    global Y
+    global sample_freq
+
+    # Get current range min and max
+    lwr, upr = p_rawData.x_range.start, p_rawData.x_range.end
+
+    # Calculate spacing for max points
+    if (upr-lwr)/sample_freq > maxPts:
+        spc = int(((upr-lwr)/maxPts)/sample_freq)
+        
+        x = X[np.arange(0, X.size, spc)]
+        y = Y[np.arange(0, X.size, spc)]
+        ds.data = dict(x=x,y=y)
+
+    if (upr-lwr)/sample_freq < maxPts and len(ds.data['x']) < maxPts:
+        print(len(ds.data['x']))
+        x = X
+        y = Y
+        ds.data = dict(x=x,y=y)
+
+    # Assign current data view to secondary plots
+    x = X[(np.abs(X - lwr)).argmin():(np.abs(X - upr)).argmin()]
+    y = Y[(np.abs(X - lwr)).argmin():(np.abs(X - upr)).argmin()]
+    ds_analysis.data = dict(x=x, y=y, y_spline=y)
+
+# Define callbacks for zooming and panning on all plots
+
+p_rawData.x_range.on_change('end', downsample)
+
+# Create customJS to get HTML5 file input information
+js_callback = CustomJS(code=open(join(dirname(__file__), "readFile.js")).read())
+
+# add a button widget and configure with the call back
+button = Button(label="Load File", id="uploadButton", width=300, button_type="warning")
+button2 = Button(label="Plot Data", width=300, button_type="warning")
+button2.on_click(plot_data)
+
+button.js_on_event(events.ButtonClick, js_callback)
+
+# Create html input in Div widget
+
+fileInput = Div(text="""
+<h1>Select File</h1>
+<input type="file" id="upload">
+""", width=350)
+
+filePreview = Div(text = '', id="filePreview", width=600)
+fileReadError = Div(text='', width=600)
+startCol = TextInput(value="0", title="Starting Column:")
+startRow = TextInput(value="0", title="Starting Row:")
+
+##########################
+# Zero Crossing Analysis
+##########################
+
+def FitSpline(attr, old, new):
+    x = ds_analysis.data['x']
+    y = ds_analysis.data['y']
+    spl = UnivariateSpline(ds_analysis.data['x'], ds_analysis.data['y'], k=3, s=splineSlider.value)
+
+    ds_analysis.data = dict(x=x,y=y,y_spline=spl(x))
+
+def InitFitSpline():
+    dataSamp = ds_analysis.data['y']
+    gSmooth = sp.ndimage.filters.gaussian_filter1d(dataSamp, 15)
+    init_s = np.sum((dataSamp - sp.ndimage.filters.gaussian_filter1d(dataSamp, 15))**2)
+    splineSlider.value = init_s
+    splineSlider.step = init_s/100
+    splineSlider.start = init_s/2
+    splineSlider.end = init_s*2
+    #print(init_s)
+    p_zeroCrossing_spline = p_zeroCrossing.line(x='x', y='y_spline', source=ds_analysis,
+                                                line_color="red", line_width=1)
+
+splineSlider = Slider(value = 0,
+                      start = 0,
+                      end = 0,
+                      step=0)
+
+splineSlider.on_change('value', FitSpline)
+
+fitSpline = Button(label="Fit Spline Curve", button_type="success")
+fitSpline.on_click(InitFitSpline)
+
+#########################
+# Define Layouts
+#########################
+
+rawData_layout = column(p_rawData, row(widgetbox(fileInput, button, startCol, startRow, button2), column(filePreview, fileReadError)))
+tab_rawData = Panel(child=rawData_layout, title="Raw Data")
+
+zeroCrossing_layout = column(p_zeroCrossing, row(fitSpline, splineSlider))
+tab_zeroCrossing = Panel(child=zeroCrossing_layout, title="Zero Crossing")
+
+tabs = Tabs(tabs=[tab_rawData, tab_zeroCrossing])
+curdoc().add_root(tabs)
+
+#######################################
+# Start bottle server for file upload
+#######################################
+
+import subprocess
+import os
+
+wd = os.getcwd()
+proc = subprocess.Popen(['python', wd + '/bottleServer.py'])

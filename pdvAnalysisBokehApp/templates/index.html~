@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>PDV Analysis - Web App</title>
+    {{ bokeh_css }}
+    {{ bokeh_js }}
+    <style>
+      {% include 'myStyle.css' %}
+    </style>
+  </head>
+  <body>
+    <div class="content">
+      <h1>Photon Doppler Velocimetry Data Analysis</h1>
+
+      {{ plot_div|indent(8) }}
+
+    </div>
+    {{ plot_script|indent(8) }}
+  </body>
+</html>
