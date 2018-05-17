@@ -817,7 +817,8 @@ tab_fft = Panel(child=fft_layout, title="Short Time Fourier Transform")
 
 # Velocity Comparison tab
 
-velocity_comparison_layout = column(p_velocity_comparison, downloadVelocityTraces)
+#velocity_comparison_layout = column(p_velocity_comparison, downloadVelocityTraces)
+velocity_comparison_layout = column(p_velocity_comparison)
 tab_velocity_comparison = Panel(child=velocity_comparison_layout, title="Velocity Comparisons")
 
 # Final arrangement of tabs
