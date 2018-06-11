@@ -31,7 +31,7 @@ import matplotlib.path
 
 ##
 
-test_mode = True
+test_mode = False
 
 ##############################################
 # Helper functions
@@ -435,8 +435,9 @@ p_zeroCrossing.on_event(SelectionGeometry, SelectionUpdateZC)
 def cwt(attr, old, new):
 	calculateCWT.button_type = "warning"
 	# Perform wavelet transform
-	yWvt = ds_analysis.data['y']
-	wa = WaveletAnalysis(yWvt, wavelet=Morlet(w0=np.float(wvtWidth.value)), dt=sampling_dt, dj=np.float(wvtFreqstep.value))
+	tStep = np.float(wvtTimestep.value)
+	yWvt = np.array(ds_analysis.data['y'])[0::tStep]
+	wa = WaveletAnalysis(yWvt, wavelet=Morlet(w0=np.float(wvtWidth.value)), dt=sampling_dt*tStep, dj=np.float(wvtFreqstep.value))
 	wvt = wa.time
 	wvfreq = wa.fourier_frequencies
 	wvpower = np.flipud(wa.wavelet_power)
@@ -452,8 +453,9 @@ def cwt(attr, old, new):
 def Plot_cwt():
 	calculateCWT.button_type = "warning"
 	# Perform initial wavelet transform
-	yWvt = ds_analysis.data['y']
-	wa = WaveletAnalysis(yWvt, wavelet=Morlet(w0=np.float(wvtWidth.value)), dt=sampling_dt, dj=np.float(wvtFreqstep.value))
+	tStep = np.float(wvtTimestep.value)
+	yWvt = np.array(ds_analysis.data['y'])[0::tStep]
+	wa = WaveletAnalysis(yWvt, wavelet=Morlet(w0=np.float(wvtWidth.value)), dt=sampling_dt*tStep, dj=np.float(wvtFreqstep.value))
 	wvt = wa.time
 	wvfreq = wa.fourier_frequencies
 	wvpower = np.flipud(wa.wavelet_power)
@@ -508,7 +510,9 @@ def ExtractVelocityWVT():
 	# wvt_ds_velocity.data['x'] = ds_analysis.data['x']
 	# wvt_ds_velocity.data['velocity'] = [freqs[i]*1550.0e-9/2 for i in wvvpks]
 	# wvt_ds_velocity.data['parameters'] = [np.float(wvtWidth.value), np.float(wvtFreqstep.value)]
-	wvt_ds_velocity.data = dict(x=ds_analysis.data['x'], velocity=[freqs[i]*1550.0e-9/2 for i in wvvpks])
+	tStep = np.float(wvtTimestep.value)
+	xWvtVel = np.array(ds_analysis.data['x'])[0::tStep]
+	wvt_ds_velocity.data = dict(x=xWvtVel, velocity=[freqs[i]*1550.0e-9/2 for i in wvvpks])
 	#print(wvvpks)
 	#ipdb.set_trace()
 	
@@ -605,7 +609,7 @@ def spectrogram(attr, old, new):
 	fft_ds.data = {'image': [power], 'dw': [power.shape[1]], 'dh': [power.shape[0]], 'fft_time': [t[0::np.int(fftTimestep.value)]], 'fft_freq': [freq]}
 	p_fft.x_range.end = power.shape[1]  # need to set ranges before creating image, and not using Range1d?
 	#p_fft.y_range.end = [np.unravel_index(power.argmax(), power.shape)[0]*2 if power.shape[0] > np.unravel_index(power.argmax(), power.shape)[0]*2 else power.shape[0]][0]  # need to set ranges before creating image, and not using Range1d?
-	p_fft.y_range.end = np.int(power.shape[0]/8)  # need to set ranges before creating image, and not using Range1d?
+	p_fft.y_range.end = np.int(power.shape[0]/12)  # need to set ranges before creating image, and not using Range1d?
 
 	calculateFFT.button_type = "success"
 
@@ -646,7 +650,7 @@ def Plot_FFT():
 	fft_ds.data = {'image': [power], 'dw': [power.shape[1]], 'dh': [power.shape[0]], 'fft_time': [t[0::np.int(fftTimestep.value)]], 'fft_freq': [freq]}
 	p_fft.x_range.end = power.shape[1]  # need to set ranges before creating image, and not using Range1d?
 	#p_fft.y_range.end = [np.unravel_index(power.argmax(), power.shape)[0]*2 if power.shape[0] > np.unravel_index(power.argmax(), power.shape)[0]*2 else power.shape[0]][0]  # need to set ranges before creating image, and not using Range1d?
-	p_fft.y_range.end = np.int(power.shape[0]/8)  # need to set ranges before creating image, and not using Range1d?
+	p_fft.y_range.end = np.int(power.shape[0]/12)  # need to set ranges before creating image, and not using Range1d?
 	#ipdb.set_trace()
 	#print(power.shape)
 
@@ -705,9 +709,9 @@ def ExtractVelocityFFT():
 calculateFFT = Button(label="Calculate STFT", button_type="success")
 calculateFFT.on_click(Plot_FFT)
 
-fftWidth = TextInput(value="128", title="Window Width")
+fftWidth = TextInput(value="128", title="Window Width (samples)")
 fftFreqbins = TextInput(value="1024", title="Frequency Bins")
-fftTimestep = TextInput(value="1", title="Time Step")
+fftTimestep = TextInput(value="1", title="Time Step (samples)")
 
 fftWidth.on_change('value', spectrogram)
 fftFreqbins.on_change('value', spectrogram)
@@ -807,8 +811,8 @@ zeroCrossing_layout = row(column(p_zeroCrossing, row(fitSpline, splineSlider), r
 tab_zeroCrossing = Panel(child=zeroCrossing_layout, title="Zero Crossing")
 
 # Wavelet analysis tab
-#wavelet_layout = row(column(p_wavelet, calculateCWT, wvtWidth, wvtFreqstep, wvtTimestep), column(p_wavelet_velocity, row(extractVelocityWVT, downloadVelocityTraceWVT)))
-wavelet_layout = row(column(p_wavelet, calculateCWT, wvtWidth, wvtFreqstep), column(p_wavelet_velocity, row(extractVelocityWVT, downloadVelocityTraceWVT)))
+wavelet_layout = row(column(p_wavelet, calculateCWT, wvtWidth, wvtFreqstep, wvtTimestep), column(p_wavelet_velocity, row(extractVelocityWVT, downloadVelocityTraceWVT)))
+#wavelet_layout = row(column(p_wavelet, calculateCWT, wvtWidth, wvtFreqstep,), column(p_wavelet_velocity, row(extractVelocityWVT, downloadVelocityTraceWVT)))
 tab_wavelet = Panel(child=wavelet_layout, title="Continuous Wavelet Transform")
 
 # FFT analysis tab
