@@ -1,14 +1,44 @@
 // Javascript code to allow downloading of velocity trace(s)
-if (typeof s1 === 'undefined') {
-    var data = source.data;
-    var filetext = 'analysis parameters (fft window/wavelet width, fft/wavelet frequency step, timestep): ' + '\n' + 'time (s), velocity (m/s)\n';  //define the header for the csv file
-    for (i=0; i < data['velocity'].length; i++) {
-        var currRow = [data['x'][i].toString(),
-                       data['velocity'][i].toString() + '\n'];
-    
-        var joined = currRow.join(', ');
-        filetext = filetext.concat(joined);
+if (typeof vel_source !== 'undefined') {
+    if (typeof base_source.data['wv_time'] !== 'undefined') {
+        var data = vel_source.data;
+        var filetext = 'analysis parameters (wavelet width, wavelet frequency step, timestep): ' + '\n' + 'time (s), velocity (m/s)\n';  //define the header for the csv file
+        for (i=0; i < data['velocity'].length; i++) {
+            var currRow = [data['x'][i].toString(),
+                           data['velocity'][i].toString() + '\n'];
+        
+            var joined = currRow.join(', ');
+            filetext = filetext.concat(joined);
+            var filename = 'cwt_velocity.csv';
+        }
     }
+
+    if (typeof base_source.data['fft_time'] !== 'undefined') {
+        var data = vel_source.data;
+        var filetext = 'analysis parameters (window width, stft frequency step, timestep): ' + '\n' + 'time (s), velocity (m/s)\n';  //define the header for the csv file
+        for (i=0; i < data['velocity'].length; i++) {
+            var currRow = [data['x'][i].toString(),
+                           data['velocity'][i].toString() + '\n'];
+        
+            var joined = currRow.join(', ');
+            filetext = filetext.concat(joined);
+            var filename = 'stft_velocity.csv';
+        }
+    }
+
+    if (typeof base_source.data['y'] !== 'undefined') {
+        var data = vel_source.data;
+        var filetext = 'analysis parameters (frequency periods, guassian smoowth width): ' + '\n' + 'time (s), velocity (m/s)\n';  //define the header for the csv file
+        for (i=0; i < data['velocity'].length; i++) {
+            var currRow = [data['x'][i].toString(),
+                           data['velocity'][i].toString() + '\n'];
+        
+            var joined = currRow.join(', ');
+            filetext = filetext.concat(joined);
+            var filename = 'peak_counting_velocity.csv';
+        }
+    }
+
 }
 
 // else if (typeof source === 'undefined') {
@@ -28,7 +58,7 @@ if (typeof s1 === 'undefined') {
 //     }
 // }
 
-var filename = 'velocity.csv';
+
 var blob = new Blob([filetext], { type: 'text/csv;charset=utf-8;' });
 
 //addresses IE users

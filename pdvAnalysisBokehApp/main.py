@@ -364,7 +364,11 @@ def CalculateVelocity():
 extractVelocityZC = Button(label="Extract Velocity", button_type="success")
 extractVelocityZC.on_click(CalculateVelocity)
 
-periodFractions = CheckboxButtonGroup(labels=["0.25", "0.5", "0.75", "1", "1.25", "1.5"], active=[1,1,1,0,0,0], name="Period Fractions")
+periodFractions = CheckboxButtonGroup(labels=["1/4 Period", "1/2 Period", "3/4 Period", "1 Period", "4/3 Period", "3/2 Period"], active=[0,0,0,1,0,0], name="Period Fractions", width=150)
+
+downloadVelocityTraceZC = Button(label="Download Velocity Trace", button_type="success")
+downloadVelocityTraceZC.callback = CustomJS(args=dict(vel_source=ds_zeroCrossing_velocity, base_source = ds_splinefit_peaks),
+                           code=open(join(dirname(__file__), "download.js")).read())
 
 def FitVelocity(attr, old, new):
 	# Perform a spline fit to the velocity data
@@ -546,7 +550,7 @@ p_wavelet_velocity.min_border_left=70
 p_wavelet_velocity.line(x='x', y='velocity', source=wvt_ds_velocity, line_width=1)
 
 downloadVelocityTraceWVT = Button(label="Download Velocity Trace", button_type="success")
-downloadVelocityTraceWVT.callback = CustomJS(args=dict(source=wvt_ds_velocity),
+downloadVelocityTraceWVT.callback = CustomJS(args=dict(vel_source=wvt_ds_velocity, base_source = wvt_ds),
                            code=open(join(dirname(__file__), "download.js")).read())
 
 # Get selected region
@@ -736,7 +740,7 @@ p_fft_velocity.min_border_left=70
 p_fft_velocity.line(x='x', y='velocity', source=fft_ds_velocity, line_width=1)
 
 downloadVelocityTraceFFT = Button(label="Download Velocity Trace", button_type="success")
-downloadVelocityTraceFFT.callback = CustomJS(args=dict(source=fft_ds_velocity),
+downloadVelocityTraceFFT.callback = CustomJS(args=dict(vel_source=fft_ds_velocity, base_source=fft_ds),
                            code=open(join(dirname(__file__), "download.js")).read())
 
 # Get selected region
@@ -807,7 +811,7 @@ tab_rawData = Panel(child=rawData_layout, title="Raw Data")
 
 # Zero crossing analysis tab
 zeroCrossing_layout = row(column(p_zeroCrossing, row(fitSpline, splineSlider), row(findPeaks, )),
-                          column(p_zeroCrossing_velocity, row(extractVelocityZC, periodFractions), velSmoothSlider))
+                          column(p_zeroCrossing_velocity, row(column(extractVelocityZC, downloadVelocityTraceZC), periodFractions,  velSmoothSlider)))
 tab_zeroCrossing = Panel(child=zeroCrossing_layout, title="Zero Crossing")
 
 # Wavelet analysis tab
