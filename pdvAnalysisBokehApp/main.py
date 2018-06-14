@@ -448,7 +448,7 @@ p_zeroCrossing.on_event(SelectionGeometry, SelectionUpdateZC)
 def cwt(attr, old, new):
 	calculateCWT.button_type = "warning"
 	# Perform wavelet transform
-	tStep = np.float(wvtTimestep.value)
+	tStep = np.int(wvtTimestep.value)
 	yWvt = np.array(ds_analysis.data['y'])[0::tStep]
 	wa = WaveletAnalysis(yWvt, wavelet=Morlet(w0=np.float(wvtWidth.value)), dt=sampling_dt*tStep, dj=np.float(wvtFreqstep.value))
 	wvt = wa.time
@@ -466,7 +466,7 @@ def cwt(attr, old, new):
 def Plot_cwt():
 	calculateCWT.button_type = "warning"
 	# Perform initial wavelet transform
-	tStep = np.float(wvtTimestep.value)
+	tStep = np.int(wvtTimestep.value)
 	yWvt = np.array(ds_analysis.data['y'])[0::tStep]
 	wa = WaveletAnalysis(yWvt, wavelet=Morlet(w0=np.float(wvtWidth.value)), dt=sampling_dt*tStep, dj=np.float(wvtFreqstep.value))
 	wvt = wa.time
