@@ -4,6 +4,13 @@ import bottle
 from bottle import run, request, post, app, route
 import tempfile
 import os
+import socket
+
+# Get host's IP address
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(("8.8.8.8", 80))
+host_ip = s.getsockname()[0]
+s.close()
 
 # Handle CORS requests
 def cors(func):
@@ -32,6 +39,6 @@ def index():
     f.write(postdata)
     f.close()
 
-run(host='localhost', port=15000, debug=True)
+run(host=host_ip, port=15000, debug=True)
 
 ###################################################

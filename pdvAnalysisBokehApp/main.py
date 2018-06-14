@@ -13,6 +13,7 @@ import scipy as sp
 import scipy.ndimage.filters
 from scipy.interpolate import UnivariateSpline
 from wavelets import WaveletAnalysis, Morlet
+import socket
 
 import librosa
 
@@ -160,7 +161,15 @@ def UpdatePlots():
 p_rawData.x_range.on_change('end', downsample)
 
 # Create customJS to get HTML5 file input information
-js_callback = CustomJS(code=open(join(dirname(__file__), "readFile.js")).read())
+
+# Get host's IP address
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(("8.8.8.8", 80))
+host_ip = s.getsockname()[0]
+s.close()
+server_info = ColumnDataSource(dict(server_ip=[host_ip]))
+
+js_callback = CustomJS(args=dict(server_ip=server_info), code=open(join(dirname(__file__), "readFile.js")).read())
 
 # add a button widget and configure with the call back
 button = Button(label="Load File", id="uploadButton", width=300, button_type="warning")

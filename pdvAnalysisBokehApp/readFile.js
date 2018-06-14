@@ -16,7 +16,8 @@ function FileUpload(file) {
   reader.onload = function(e) {
     //console.log(reader.result)
     var xhr = new XMLHttpRequest();
-    xhr.open("POST", "http://localhost:15000/", true);
+    //console.log(server_ip.data['server_ip']);
+    xhr.open("POST", "http://" + server_ip.data['server_ip'][0] + ":15000/", true);
     xhr.setRequestHeader('Content-Type', 'text/plain');
     xhr.send(reader.result);
 
