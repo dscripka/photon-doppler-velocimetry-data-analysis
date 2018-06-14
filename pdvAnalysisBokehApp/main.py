@@ -523,7 +523,7 @@ def ExtractVelocityWVT():
 	# wvt_ds_velocity.data['x'] = ds_analysis.data['x']
 	# wvt_ds_velocity.data['velocity'] = [freqs[i]*1550.0e-9/2 for i in wvvpks]
 	# wvt_ds_velocity.data['parameters'] = [np.float(wvtWidth.value), np.float(wvtFreqstep.value)]
-	tStep = np.float(wvtTimestep.value)
+	tStep = np.int(wvtTimestep.value)
 	xWvtVel = np.array(ds_analysis.data['x'])[0::tStep]
 	wvt_ds_velocity.data = dict(x=xWvtVel, velocity=[freqs[i]*1550.0e-9/2 for i in wvvpks])
 	#print(wvvpks)
